@@ -1,0 +1,25 @@
+Stock Regime Detector — launcher script.
+
+Full implementation lives in the stock_regime_detector/ package.
+
+Usage:
+    python stock_regime_detector.py [options]
+    python -m stock_regime_detector [options]
+
+Common options:
+    --tickers SPY QQQ AAPL   Tickers to analyse (default: SPY QQQ AAPL)
+    --live                   Fetch real data via yfinance
+    --n-regimes 3            Fix number of regimes (default: auto 2-6)
+    --walk-forward           Re-fit HMM on rolling window
+    --smooth 3               Min days to hold a regime label
+    --target-vol 0.15        Annualised vol target for position sizing
+    --transaction-cost 5e-4  One-way cost per trade (default: 5 bps)
+    --outdir outputs         Output directory for charts
+    --help                   Show all options
+
+import runpy
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+runpy.run_module("stock_regime_detector", run_name="__main__", alter_sys=True)
