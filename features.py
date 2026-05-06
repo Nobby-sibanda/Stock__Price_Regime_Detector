@@ -1,10 +1,13 @@
+import logging
 import numpy as np
 import pandas as pd
 
+log = logging.getLogger(__name__)
+
 FEAT_COLS = [
     "returns",      # 0
-    "volatility",   # 1  ← used by semantic_labels (vi=1)
-    "trend_slope",  # 2  ← used by semantic_labels (si=2)
+    "volatility",   # 1  <- used by semantic_labels (VOL_IDX=1)
+    "trend_slope",  # 2  <- used by semantic_labels (SLOPE_IDX=2)
     "zscore",       # 3
     "rsi",          # 4
     "atr",          # 5
@@ -13,26 +16,48 @@ FEAT_COLS = [
     "ret_autocorr", # 8
 ]
 
-# Indices used downstream for regime labelling
 VOL_IDX   = FEAT_COLS.index("volatility")
 SLOPE_IDX = FEAT_COLS.index("trend_slope")
 
 
 def _rolling_slope(arr: np.ndarray, window: int) -> np.ndarray:
     """
-    Vectorised rolling OLS slope via stride tricks — replaces the O(n*w)
-    Python loop in the original.  ~100x faster on long series.
+    Vectorised rolling OLS slope via stride tricks.
+    ~100x faster than a Python loop on long series.
     """
     windows = np.lib.stride_tricks.sliding_window_view(arr.astype(float), window)
     x  = np.arange(window, dtype=float)
     x -= x.mean()
     ssx = (x ** 2).sum()
-    # subtract row means, then dot with x
     y   = windows - windows.mean(axis=1, keepdims=True)
     slp = (y * x).sum(axis=1) / ssx
     result = np.full(len(arr), np.nan)
     result[window - 1:] = slp
     return result
+
+
+def _rolling_autocorr(s: pd.Series, window: int) -> pd.Series:
+    """
+    Vectorised lag-1 rolling autocorrelation via stride tricks.
+    Avoids the O(n*w) pandas rolling corr overhead.
+    """
+    arr     = s.values.astype(float)
+    arr_lag = np.roll(arr, 1)
+    arr_lag[0] = np.nan
+
+    wins     = np.lib.stride_tricks.sliding_window_view(arr,     window)
+    wins_lag = np.lib.stride_tricks.sliding_window_view(arr_lag, window)
+
+    ym  = wins     - wins.mean(axis=1,     keepdims=True)
+    ylm = wins_lag - wins_lag.mean(axis=1, keepdims=True)
+
+    num  = (ym * ylm).sum(axis=1)
+    den  = np.sqrt((ym ** 2).sum(axis=1) * (ylm ** 2).sum(axis=1)) + 1e-9
+    corr = num / den
+
+    result = np.full(len(arr), np.nan)
+    result[window - 1:] = corr
+    return pd.Series(result, index=s.index)
 
 
 def engineer_features(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
@@ -68,9 +93,8 @@ def engineer_features(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     df["bb_width"] = (upper - lower_b) / (roll_mean + 1e-9)
     df["vol_ratio"] = vol / (vol.rolling(window).mean() + 1e-9)
 
-    # Vectorised lag-1 autocorrelation — replaces the slow rolling lambda
-    ret = df["returns"]
-    df["ret_autocorr"] = ret.rolling(window).corr(ret.shift(1))
+    df["ret_autocorr"] = _rolling_autocorr(df["returns"], window)
 
     df.dropna(inplace=True)
+    log.debug("Engineered features: %d rows x %d feature cols", len(df), len(FEAT_COLS))
     return df
