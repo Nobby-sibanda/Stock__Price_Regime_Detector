@@ -6,6 +6,23 @@ Open: http://localhost:5000
 
 import os
 import sys
+
+# ── Import path setup ─────────────────────────────────────────────────────────
+# The file stock_regime_detector.py (CLI launcher) lives alongside this file.
+# If the script directory is in sys.path, Python finds that file first and
+# treats it as the 'stock_regime_detector' module, causing infinite recursion.
+# Fix: strip the script directory and add only its parent, so Python resolves
+# 'stock_regime_detector' to the package directory instead.
+
+_here   = os.path.dirname(os.path.abspath(__file__))
+_parent = os.path.dirname(_here)
+
+while _here in sys.path:
+    sys.path.remove(_here)
+
+if _parent not in sys.path:
+    sys.path.insert(0, _parent)
+
 import json
 import uuid
 import threading
@@ -16,13 +33,6 @@ from flask import (
     Flask, render_template, request,
     redirect, url_for, jsonify, send_from_directory,
 )
-
-# ── Package path (works both locally and inside the Docker layout) ────────────
-_here   = os.path.dirname(os.path.abspath(__file__))
-_parent = os.path.dirname(_here)
-for _p in [_parent, _here]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 from stock_regime_detector.data     import simulate_market_data, load_live_data
 from stock_regime_detector.features import engineer_features, FEAT_COLS
@@ -35,9 +45,13 @@ from stock_regime_detector.metrics  import performance_metrics
 from stock_regime_detector.plot     import plot_dashboard
 from stock_regime_detector.config   import REGIME_NAMES, REGIME_ICONS, STRATEGY_DESC
 
-# ── Flask app ─────────────────────────────────────────────────────────────────
-app      = Flask(__name__)
-RUNS     = {}          # keyed by run_id
+# ── Flask app — template_folder set explicitly so Flask finds it from any cwd ─
+app = Flask(
+    __name__,
+    template_folder=os.path.join(_here, "templates"),
+)
+
+RUNS     = {}
 OUT_ROOT = os.path.join(_here, "outputs")
 os.makedirs(OUT_ROOT, exist_ok=True)
 
@@ -53,17 +67,17 @@ def _run_analysis(run_id, cfg):
         outdir = os.path.join(OUT_ROOT, run_id)
         os.makedirs(outdir, exist_ok=True)
 
-        tickers       = cfg["tickers"]
-        n_regimes     = cfg["n_regimes"]
-        window        = cfg["window"]
-        live          = cfg["live"]
-        period        = cfg["period"]
-        walk_forward  = cfg["walk_forward"]
-        train_days    = cfg["train_days"]
-        step_days     = cfg["step_days"]
-        smooth        = cfg["smooth"]
-        target_vol    = cfg["target_vol"]
-        txn_cost      = cfg["txn_cost"]
+        tickers      = cfg["tickers"]
+        n_regimes    = cfg["n_regimes"]
+        window       = cfg["window"]
+        live         = cfg["live"]
+        period       = cfg["period"]
+        walk_forward = cfg["walk_forward"]
+        train_days   = cfg["train_days"]
+        step_days    = cfg["step_days"]
+        smooth       = cfg["smooth"]
+        target_vol   = cfg["target_vol"]
+        txn_cost     = cfg["txn_cost"]
 
         all_results = {}
 
