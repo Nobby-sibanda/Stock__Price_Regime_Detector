@@ -217,3 +217,55 @@ pytest tests/ -v
 ## Author
 
 **Nobby Sibanda** — [GitHub](https://github.com/Nobby-sibanda)
+
+---
+
+## Running with Docker
+
+The project includes a full-featured web UI. Run it in a container and open it in your browser.
+
+### 1 — Clone and build
+
+```bash
+git clone https://github.com/Nobby-sibanda/Stock__Price_Regime_Detector.git
+cd Stock__Price_Regime_Detector
+docker build -t stock-regime-detector .
+```
+
+### 2 — Start the container
+
+```bash
+docker run -p 5000:5000 stock-regime-detector
+```
+
+### 3 — Open in browser
+
+```
+http://localhost:5000
+```
+
+### What you get
+
+The web UI lets you configure every option via a form and shows live results:
+
+| Page | Description |
+|------|-------------|
+| `/` | Configuration form — tickers, data source, model settings, strategy parameters |
+| `/results/{id}` | Auto-refreshing results page — shows a spinner while running, then displays charts, metrics, transition matrix, and current regime recommendation for each ticker × method |
+
+Charts are rendered inline (no file downloads needed) and tabs let you switch between tickers and between HMM / KMeans / Ensemble / Walk-forward methods.
+
+### Optional: persist outputs between runs
+
+```bash
+docker run -p 5000:5000 -v $(pwd)/outputs:/workspace/stock_regime_detector/outputs stock-regime-detector
+```
+
+### Optional: use live market data
+
+```bash
+# Install yfinance inside the container at runtime
+docker run -p 5000:5000 stock-regime-detector sh -c "pip install yfinance -q && python app.py"
+```
+
+Or add `yfinance>=0.2` to `requirements.txt` before building to bake it into the image.
