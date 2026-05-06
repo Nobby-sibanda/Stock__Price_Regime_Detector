@@ -1,17 +1,26 @@
 """
 Signal generation with:
   - Vectorised regime-specific logic (no Python loop)
-  - Volatility-targeting: size ∝ target_vol / realised_vol (capped at 3×)
+  - Volatility-targeting: size proportional to target_vol / realised_vol
+    (capped at MAX_POSITION_SIZE)
   - Transaction cost deducted on every signal change
+  - Optional regime_prob stored as a column in the output DataFrame
 """
 
 import numpy as np
 import pandas as pd
 
+from .config import (
+    MR_ZSCORE_THRESHOLD,
+    VOL_RSI_LOW, VOL_RSI_HIGH, VOL_SIGNAL_SIZE,
+    MAX_POSITION_SIZE,
+)
+
 
 def generate_signals(
     df: pd.DataFrame,
     regimes: np.ndarray,
+    regime_prob: np.ndarray | None = None,
     target_vol: float = 0.15,
     transaction_cost: float = 0.0005,
 ) -> pd.DataFrame:
@@ -24,18 +33,18 @@ def generate_signals(
 
     # ── Regime-specific raw signals (vectorised) ──────────────────────────
     trending_sig = np.sign(slope)
-    mr_sig       = np.where(zscore >  1.5, -1.0,
-                   np.where(zscore < -1.5,  1.0, 0.0))
-    vol_sig      = np.where(rsi < 25,  0.25,
-                   np.where(rsi > 75, -0.25, 0.0))
+    mr_sig       = np.where(zscore >  MR_ZSCORE_THRESHOLD, -1.0,
+                   np.where(zscore < -MR_ZSCORE_THRESHOLD,  1.0, 0.0))
+    vol_sig      = np.where(rsi < VOL_RSI_LOW,   VOL_SIGNAL_SIZE,
+                   np.where(rsi > VOL_RSI_HIGH,  -VOL_SIGNAL_SIZE, 0.0))
 
     raw_sig = np.where(r == 0, trending_sig,
               np.where(r == 1, mr_sig, vol_sig))
 
     # ── Volatility-targeting position size ────────────────────────────────
-    ann_vol = df["volatility"].values
-    size    = np.where(ann_vol > 1e-6, target_vol / ann_vol, 1.0)
-    size    = np.clip(size, 0.0, 3.0)
+    ann_vol   = df["volatility"].values
+    size      = np.where(ann_vol > 1e-6, target_vol / ann_vol, 1.0)
+    size      = np.clip(size, 0.0, MAX_POSITION_SIZE)
     sized_sig = raw_sig * size
 
     # ── Transaction cost on every signal change ───────────────────────────
@@ -46,4 +55,6 @@ def generate_signals(
     df["regime"]    = regimes
     df["signal"]    = sized_sig
     df["strat_ret"] = strat_ret
+    if regime_prob is not None:
+        df["regime_prob"] = np.asarray(regime_prob)
     return df
