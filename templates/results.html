@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Results — Stock Regime Detector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background:#0d1117; color:#e6edf3; font-family:ui-monospace,monospace; }
+    .card { background:#161b22; border:1px solid #30363d; border-radius:8px; }
+    .tab-btn { background:#0d1117; border:1px solid #30363d; color:#8b949e;
+               border-radius:6px 6px 0 0; padding:6px 16px; cursor:pointer;
+               font-size:0.85rem; border-bottom:none; }
+    .tab-btn.active { background:#161b22; color:#f0f6fc; border-bottom:1px solid #161b22; }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+    .metric-row { display:flex; justify-content:space-between; padding:6px 0;
+                  border-bottom:1px solid #21262d; }
+    .metric-label { color:#8b949e; font-size:0.8rem; }
+    .metric-val   { color:#f0f6fc; font-size:0.8rem; font-weight:600; }
+    .regime-badge { display:inline-flex; align-items:center; gap:6px;
+                    padding:4px 14px; border-radius:20px; font-weight:700; font-size:1rem; }
+    .spin { animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    table.trans { width:100%; border-collapse:collapse; font-size:0.75rem; }
+    table.trans th,table.trans td { border:1px solid #30363d; padding:4px 10px; text-align:center; }
+    table.trans th { background:#0d1117; color:#8b949e; }
+    .back-btn { background:#161b22; border:1px solid #30363d; color:#8b949e;
+                border-radius:6px; padding:6px 16px; cursor:pointer; font-size:0.85rem; }
+    .back-btn:hover { color:#e6edf3; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+<div class="max-w-5xl mx-auto">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-3">
+      <span style="font-size:1.4rem">↑</span>
+      <h1 class="text-xl font-bold" style="color:#58a6ff">Stock Regime Detector</h1>
+    </div>
+    <a href="/" class="back-btn">← New Analysis</a>
+  </div>
+
+  <!-- Status banner -->
+  <div id="status-banner" class="card p-4 mb-6 flex items-center gap-3">
+    <div id="spinner" class="spin" style="width:20px;height:20px;border:3px solid #30363d;
+         border-top-color:#58a6ff;border-radius:50%;"></div>
+    <span id="status-text" style="color:#8b949e">Initialising analysis...</span>
+  </div>
+
+  <!-- Error panel -->
+  <div id="error-panel" class="card p-4 mb-6 hidden" style="border-color:#e74c3c">
+    <p style="color:#e74c3c;font-weight:700;margin-bottom:8px">Analysis failed</p>
+    <pre id="error-msg" style="color:#8b949e;font-size:0.75rem;white-space:pre-wrap;"></pre>
+  </div>
+
+  <!-- Results panel -->
+  <div id="results-panel" class="hidden">
+
+    <!-- Ticker tabs -->
+    <div id="ticker-tabs" class="flex gap-1 mb-0 flex-wrap"></div>
+
+    <!-- Ticker panels -->
+    <div id="ticker-panels" class="card p-0" style="border-radius:0 8px 8px 8px;"></div>
+
+  </div>
+
+</div>
+
+<script>
+const RUN_ID  = "{{ run_id }}";
+const COLOURS = { TRENDING:"#00d4aa", "MEAN-REV":"#f5a623", VOLATILE:"#e74c3c" };
+let   pollTimer = null;
+
+function poll() {
+  fetch(`/api/status/${RUN_ID}`)
+    .then(r => r.json())
+    .then(data => {
+      const txt = document.getElementById("status-text");
+      if (data.status === "pending" || data.status === "running") {
+        txt.textContent = data.status === "pending"
+          ? "Queued — waiting to start..."
+          : "Running analysis (HMM + KMeans + Ensemble)...";
+        pollTimer = setTimeout(poll, 2000);
+      } else if (data.status === "done") {
+        clearTimeout(pollTimer);
+        document.getElementById("spinner").style.display = "none";
+        txt.textContent = "Analysis complete.";
+        txt.style.color = "#00d4aa";
+        buildResults(data.results);
+        document.getElementById("results-panel").classList.remove("hidden");
+      } else if (data.status === "error") {
+        clearTimeout(pollTimer);
+        document.getElementById("spinner").style.display = "none";
+        txt.textContent = "Error during analysis.";
+        txt.style.color = "#e74c3c";
+        document.getElementById("error-msg").textContent =
+          (data.error || "") + "\n\n" + (data.traceback || "");
+        document.getElementById("error-panel").classList.remove("hidden");
+      }
+    })
+    .catch(() => { pollTimer = setTimeout(poll, 3000); });
+}
+
+function buildResults(results) {
+  const tickers      = Object.keys(results);
+  const tickerTabs   = document.getElementById("ticker-tabs");
+  const tickerPanels = document.getElementById("ticker-panels");
+
+  tickers.forEach((ticker, ti) => {
+    // Ticker tab button
+    const btn = document.createElement("button");
+    btn.className = "tab-btn" + (ti === 0 ? " active" : "");
+    btn.textContent = ticker;
+    btn.dataset.ticker = ticker;
+    btn.onclick = () => activateTickerTab(ticker);
+    tickerTabs.appendChild(btn);
+
+    // Ticker panel
+    const panel = document.createElement("div");
+    panel.id = `tp-${ticker}`;
+    panel.className = "tab-panel p-5" + (ti === 0 ? " active" : "");
+    panel.innerHTML = buildTickerPanel(ticker, results[ticker]);
+    tickerPanels.appendChild(panel);
+  });
+}
+
+function buildTickerPanel(ticker, methods) {
+  const methodNames = Object.keys(methods);
+  let tabs = methodNames.map((m, i) =>
+    `<button class="tab-btn ${i===0?'active':''}" id="mb-${ticker}-${m}"
+             onclick="activateMethodTab('${ticker}','${m}')">${m}</button>`
+  ).join("");
+
+  let panels = methodNames.map((m, i) => {
+    const r = methods[m];
+    return `<div id="mp-${ticker}-${m}" class="tab-panel p-0 ${i===0?'active':''}">
+      ${buildMethodPanel(ticker, m, r)}
+    </div>`;
+  }).join("");
+
+  return `
+    <div class="flex gap-1 mb-0 flex-wrap">${tabs}</div>
+    <div style="border:1px solid #30363d;border-radius:0 8px 8px 8px;padding:20px;">
+      ${panels}
+    </div>`;
+}
+
+function buildMethodPanel(ticker, method, r) {
+  const colour = COLOURS[r.regime_name] || "#58a6ff";
+  const icon   = r.regime_icon || "";
+  const m      = r.metrics;
+
+  // Key metrics cards
+  const keyMetrics = [
+    ["Strategy Sharpe",  m["Strategy Sharpe"]],
+    ["Buy&Hold Sharpe",  m["Buy&Hold Sharpe"]],
+    ["Strategy CAGR",    m["Strategy CAGR"]],
+    ["Buy&Hold CAGR",    m["Buy&Hold CAGR"]],
+    ["Strategy Max DD",  m["Strategy Max DD"]],
+    ["Strategy Calmar",  m["Strategy Calmar"]],
+  ];
+  const metricCards = keyMetrics.map(([k, v]) => `
+    <div class="card p-3">
+      <div class="metric-label">${k}</div>
+      <div class="metric-val text-lg">${v}</div>
+    </div>`).join("");
+
+  // Full metrics table
+  const allMetricRows = Object.entries(m).map(([k, v]) => `
+    <div class="metric-row">
+      <span class="metric-label">${k}</span>
+      <span class="metric-val">${v}</span>
+    </div>`).join("");
+
+  // Transition matrix
+  const trans = r.transition;
+  const transCols = trans.columns;
+  const transRows = trans.index;
+  let transHTML = `<table class="trans"><tr><th></th>${transCols.map(c=>`<th>${c}</th>`).join("")}</tr>`;
+  trans.data.forEach((row, i) => {
+    transHTML += `<tr><th>${transRows[i]}</th>${row.map(v=>`<td>${v}</td>`).join("")}</tr>`;
+  });
+  transHTML += "</table>";
+
+  return `
+    <!-- Current Regime -->
+    <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+      <div>
+        <div class="label mb-1" style="color:#8b949e;font-size:0.75rem">CURRENT REGIME</div>
+        <span class="regime-badge" style="background:${colour}22;color:${colour};border:1px solid ${colour}44">
+          ${icon} ${r.regime_name}
+          <span style="font-size:0.75rem;opacity:0.8;">(${r.regime_prob}% confidence)</span>
+        </span>
+      </div>
+      <div class="card p-3 text-sm" style="max-width:340px;color:#8b949e;white-space:pre-line;font-size:0.75rem">
+        ${r.strategy_desc}
+      </div>
+    </div>
+
+    <!-- Key metrics grid -->
+    <div class="grid grid-cols-3 gap-3 mb-5">${metricCards}</div>
+
+    <!-- Chart -->
+    <div class="mb-5">
+      <img src="${r.chart_url}" alt="${ticker} ${method} chart"
+           style="width:100%;border-radius:6px;border:1px solid #30363d;"/>
+    </div>
+
+    <!-- Transition matrix -->
+    <div class="mb-5">
+      <div class="label mb-2" style="color:#8b949e;font-size:0.75rem">REGIME TRANSITION MATRIX</div>
+      ${transHTML}
+    </div>
+
+    <!-- All metrics -->
+    <details>
+      <summary class="cursor-pointer" style="color:#8b949e;font-size:0.8rem;margin-bottom:8px">
+        All metrics ▾
+      </summary>
+      <div class="card p-3">${allMetricRows}</div>
+    </details>
+  `;
+}
+
+function activateTickerTab(ticker) {
+  document.querySelectorAll("#ticker-tabs .tab-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.ticker === ticker));
+  document.querySelectorAll("#ticker-panels .tab-panel").forEach(p =>
+    p.classList.toggle("active", p.id === `tp-${ticker}`));
+}
+
+function activateMethodTab(ticker, method) {
+  const panelEl = document.getElementById(`tp-${ticker}`);
+  panelEl.querySelectorAll(".tab-btn").forEach(b =>
+    b.classList.toggle("active", b.id === `mb-${ticker}-${method}`));
+  panelEl.querySelectorAll(".tab-panel").forEach(p =>
+    p.classList.toggle("active", p.id === `mp-${ticker}-${method}`));
+}
+
+// Start polling immediately
+poll();
+</script>
+</body>
+</html>
