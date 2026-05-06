@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Stock Regime Detector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0d1117; color: #e6edf3; font-family: ui-monospace, monospace; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; }
+    .input { background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+             border-radius: 6px; padding: 8px 12px; width: 100%; }
+    .input:focus { outline: none; border-color: #58a6ff; }
+    .label { color: #8b949e; font-size: 0.8rem; margin-bottom: 4px; display: block; }
+    .btn-primary { background: #238636; color: white; border: none; border-radius: 6px;
+                   padding: 10px 24px; cursor: pointer; font-size: 0.95rem; }
+    .btn-primary:hover { background: #2ea043; }
+    .tag { display: inline-block; background: #161b22; border: 1px solid #30363d;
+           border-radius: 12px; padding: 2px 10px; font-size: 0.75rem; color: #8b949e; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+
+  <!-- Header -->
+  <div class="max-w-3xl mx-auto">
+    <div class="mb-8">
+      <div class="flex items-center gap-3 mb-2">
+        <span style="font-size:1.6rem">↑</span>
+        <h1 class="text-2xl font-bold" style="color:#58a6ff">Stock Regime Detector</h1>
+      </div>
+      <p style="color:#8b949e">
+        Unsupervised market regime detection using Hidden Markov Models &amp; KMeans.
+        Generates regime-adaptive trading signals with volatility targeting.
+      </p>
+    </div>
+
+    <form action="/run" method="POST">
+      <div class="card p-6 mb-4">
+        <h2 class="font-semibold mb-4" style="color:#f0f6fc">Data</h2>
+        <div class="grid grid-cols-2 gap-4">
+
+          <div class="col-span-2">
+            <label class="label">Ticker symbols (space-separated)</label>
+            <input class="input" type="text" name="tickers" value="SPY QQQ AAPL"
+                   placeholder="e.g. SPY QQQ AAPL MSFT"/>
+          </div>
+
+          <div>
+            <label class="label">Data source</label>
+            <div class="flex gap-4 mt-2">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="data_mode" value="simulated" checked
+                       onchange="document.getElementById('live-opts').classList.add('hidden')"
+                       style="accent-color:#58a6ff"/>
+                <span style="color:#e6edf3">Simulated</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="live" id="live-cb"
+                       onchange="document.getElementById('live-opts').classList.toggle('hidden', !this.checked)"
+                       style="accent-color:#58a6ff"/>
+                <span style="color:#e6edf3">Live (yfinance)</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="live-opts" class="hidden">
+            <label class="label">Period (yfinance)</label>
+            <select class="input" name="period">
+              <option value="1y">1 year</option>
+              <option value="3y" selected>3 years</option>
+              <option value="5y">5 years</option>
+            </select>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="card p-6 mb-4">
+        <h2 class="font-semibold mb-4" style="color:#f0f6fc">Model</h2>
+        <div class="grid grid-cols-3 gap-4">
+
+          <div>
+            <label class="label">Rolling window (days)</label>
+            <input class="input" type="number" name="window" value="20" min="5" max="60"/>
+          </div>
+
+          <div>
+            <label class="label">Number of regimes
+              <span class="tag ml-1">blank = auto</span>
+            </label>
+            <input class="input" type="number" name="n_regimes" placeholder="auto (BIC)"
+                   min="2" max="6"/>
+          </div>
+
+          <div>
+            <label class="label">Regime smoothing (days)</label>
+            <input class="input" type="number" name="smooth" value="3" min="0" max="20"/>
+          </div>
+
+          <div class="col-span-3">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="walk_forward" id="wf-cb"
+                     onchange="document.getElementById('wf-opts').classList.toggle('hidden', !this.checked)"
+                     style="accent-color:#58a6ff"/>
+              <span style="color:#e6edf3">Walk-forward HMM re-fitting</span>
+              <span class="tag">avoids look-ahead bias</span>
+            </label>
+          </div>
+
+          <div id="wf-opts" class="col-span-3 hidden grid grid-cols-2 gap-4">
+            <div>
+              <label class="label">Training window (days)</label>
+              <input class="input" type="number" name="train_days" value="252"/>
+            </div>
+            <div>
+              <label class="label">Re-fit interval (days)</label>
+              <input class="input" type="number" name="step_days" value="63"/>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="card p-6 mb-6">
+        <h2 class="font-semibold mb-4" style="color:#f0f6fc">Strategy</h2>
+        <div class="grid grid-cols-2 gap-4">
+
+          <div>
+            <label class="label">Volatility target (e.g. 0.15 = 15%)</label>
+            <input class="input" type="number" name="target_vol" value="0.15"
+                   min="0.05" max="1.0" step="0.05"/>
+          </div>
+
+          <div>
+            <label class="label">Transaction cost (e.g. 0.0005 = 5 bps)</label>
+            <input class="input" type="number" name="txn_cost" value="0.0005"
+                   min="0" max="0.01" step="0.0001"/>
+          </div>
+
+        </div>
+      </div>
+
+      <button type="submit" class="btn-primary w-full text-center">
+        ▶ Run Analysis
+      </button>
+    </form>
+
+    <p class="text-center mt-4" style="color:#8b949e;font-size:0.8rem">
+      Analysis typically takes 10–60 seconds depending on the number of tickers and methods.
+    </p>
+  </div>
+</body>
+</html>
