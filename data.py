@@ -9,7 +9,9 @@ def simulate_market_data(ticker, n_days=756):
     """
     seeds  = {"SPY": 42,    "QQQ": 7,     "AAPL": 13}
     starts = {"SPY": 420.0, "QQQ": 340.0, "AAPL": 160.0}
-    rng = np.random.default_rng(seeds.get(ticker, 99))
+    # Hash unknown tickers so each gets distinct but reproducible synthetic data
+    seed = seeds.get(ticker, abs(hash(ticker)) % (2 ** 31))
+    rng  = np.random.default_rng(seed)
 
     reg_seq = [0, 1, 2] * 4
     lengths = [int(rng.integers(60, 120)) for _ in reg_seq]
@@ -23,7 +25,8 @@ def simulate_market_data(ticker, n_days=756):
         2: (0.0000, 0.022),
     }
 
-    price = [starts.get(ticker, 100.0)]
+    start_price = starts.get(ticker, 100.0)
+    price = [start_price]
     for i in range(1, n_days):
         drift, vol = regime_params[regime_labels[i]]
         price.append(price[-1] * (1 + drift + vol * rng.standard_normal()))
@@ -57,7 +60,6 @@ def load_live_data(ticker, period="3y"):
     if raw.empty:
         raise ValueError(f"No data returned for ticker '{ticker}'")
 
-    # yfinance may return a MultiIndex when downloading a single ticker
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
 
