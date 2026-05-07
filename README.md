@@ -1,6 +1,6 @@
 # Stock Price Regime Detector
 
-An unsupervised machine-learning toolkit that identifies hidden market regimes in stock price data and generates regime-adaptive trading signals with volatility targeting.
+An unsupervised machine-learning toolkit that identifies hidden market regimes in stock price data, generates regime-adaptive trading signals with volatility targeting, and persists every analysis to a database for future ML research.
 
 ---
 
@@ -12,6 +12,10 @@ Financial markets cycle through structurally distinct phases — trending, mean-
 OHLCV Data  ──►  Feature Engineering  ──►  Regime Detection  ──►  Signal Generation  ──►  Dashboard
               (9 technical indicators)   (HMM / KMeans /        (Volatility-targeted     (8-panel PNG)
                                           Ensemble / Walk-fwd)   position sizing)
+                                                    │
+                                                    ▼
+                                          SQLite Database
+                                    (users · analyses · timeseries)
 ```
 
 ---
@@ -30,7 +34,13 @@ OHLCV Data  ──►  Feature Engineering  ──►  Regime Detection  ──�
 
 ```
 Stock__Price_Regime_Detector/
-├── __main__.py          # Entry point — orchestrates the full pipeline
+├── app.py               # Flask web UI — routes, auth integration, DB persistence
+├── auth.py              # Authentication Blueprint (register / login / logout)
+├── db.py                # SQLite persistence layer (users, analyses, timeseries)
+├── conftest.py          # Pytest root conftest — fixes package import path
+├── run.py               # CLI launcher: python run.py [options]
+│
+├── __main__.py          # Package entry point — orchestrates the full pipeline
 ├── __init__.py          # Package init
 ├── cli.py               # CLI argument parsing (--verbose, --dry-run, --export-metrics, …)
 ├── config.py            # Constants: regime names/colors/icons/strategy thresholds/plot sizes
@@ -39,8 +49,15 @@ Stock__Price_Regime_Detector/
 ├── models.py            # Regime detection: HMM, KMeans, Ensemble, Walk-forward
 ├── strategy.py          # Signal generation with vol-targeting & transaction costs
 ├── metrics.py           # Performance metrics (Sharpe, CAGR, Max DD, Calmar)
-├── plot.py              # 8-panel matplotlib dashboard (split into sub-functions)
-├── stock_regime_detector.py  # Top-level launcher script
+├── plot.py              # 8-panel matplotlib dashboard
+│
+├── templates/
+│   ├── login.html       # Login page
+│   ├── register.html    # Account creation page
+│   ├── index.html       # Analysis configuration form
+│   ├── results.html     # Live-polling results page
+│   └── history.html     # Past analyses table + export links
+│
 ├── requirements.txt     # Pinned dependencies
 ├── pyproject.toml       # PEP 517/518 build config + pip install support
 └── tests/
@@ -48,6 +65,47 @@ Stock__Price_Regime_Detector/
     ├── test_models.py   # Detector smoke tests (shape, label validity, tuple return)
     └── test_strategy.py # Signal generation smoke tests
 ```
+
+---
+
+## Authentication
+
+Every route in the web UI requires a logged-in account. On first visit users are redirected to `/login`.
+
+| Page | Description |
+|------|-------------|
+| `/register` | Create an account — username (≥3 chars) and password (≥6 chars) |
+| `/login` | Sign in with optional "remember me" |
+| `/logout` | End the session |
+
+Passwords are hashed with **werkzeug's PBKDF2-SHA256** implementation — plain-text passwords are never stored.
+
+---
+
+## Database
+
+Every completed analysis is automatically saved to `regime_history.db` (SQLite, no external server required).
+
+### Tables
+
+| Table | Contents |
+|-------|----------|
+| `users` | Registered accounts — username, hashed password, created timestamp |
+| `analyses` | One row per run — run ID, user, tickers, full config JSON, status, timestamps |
+| `analysis_results` | Per-ticker per-method summary — metrics, current regime, confidence, transition matrix, chart URL |
+| `regime_timeseries` | Full daily time series for every run — OHLCV + 9 features + regime label + signal + strategy return |
+
+The `regime_timeseries` table is the **raw ML dataset**: 18 columns of structured, labelled daily market data that can be used directly to train classifiers, regressors, or clustering models on real regime behaviour.
+
+### Web Routes
+
+| Route | Description |
+|-------|-------------|
+| `/history` | Table of all your past analyses — status, tickers, duration, and links back to results |
+| `/export/csv` | Download all stored timeseries as a flat CSV |
+| `/export/json` | Same data as a JSON array |
+
+Past runs survive server restarts — revisiting `/results/<run_id>` for an old run rebuilds the results payload from the database.
 
 ---
 
@@ -75,12 +133,10 @@ Gaussian HMM with full covariance matrices (`hmmlearn`). Component count auto-se
 ### KMeans
 KMeans with **automatic k selection** (silhouette score across k ∈ {2…6}). Distance-based confidence score returned alongside labels.
 
-### Ensemble (bug-fixed)
+### Ensemble
 Majority-vote of HMM and KMeans predictions. Both models share the same k (auto-selected via HMM BIC). Where they agree the label is kept; where they disagree KMeans acts as the second opinion. Confidence is the mean of both models' regime probabilities.
 
-> **Note:** The original ensemble had a bug (`np.where(a==b, a, a)`) that made it identical to plain HMM. This is now fixed.
-
-### Walk-Forward (`--walk-forward`)
+### Walk-Forward
 Rolling-window HMM re-fit: trains on the last `--train-days` trading days, predicts the next `--step-days`, then slides forward. Eliminates look-ahead bias. Shows a `tqdm` progress bar during the fold loop.
 
 ---
@@ -136,36 +192,60 @@ Each run saves an 8-panel PNG to `outputs/`:
 git clone https://github.com/Nobby-sibanda/Stock__Price_Regime_Detector.git
 cd Stock__Price_Regime_Detector
 
-# Install all dependencies
+# Install all dependencies (includes Flask + Flask-Login)
 pip install -r requirements.txt
 
-# Or install as a package (enables `stock-regime-detector` CLI command)
+# Or install as an editable package (enables `stock-regime-detector` CLI)
 pip install -e .
 
-# Optional — only needed for --live flag
-pip install yfinance
+# Dev dependencies (pytest, coverage)
+pip install -e ".[dev]"
 ```
 
 ---
 
-## Usage
+## Web UI Usage
+
+```bash
+python app.py
+# Open http://localhost:5000
+```
+
+1. **Register** an account at `/register`
+2. **Configure** tickers, data source, model settings, and strategy parameters on the home page
+3. **Run** the analysis — a spinner shows progress while HMM, KMeans, and Ensemble models fit
+4. **View results** — regime dashboard charts, metrics, transition matrix, and current regime recommendation
+5. **History** — revisit any past run from `/history`; export the full timeseries dataset as CSV or JSON for your own ML work
+
+### Web Pages
+
+| Page | Description |
+|------|-------------|
+| `/` | Analysis configuration form |
+| `/results/{id}` | Auto-refreshing results — charts, metrics, transition matrix, current regime |
+| `/history` | All past analyses with export links |
+| `/export/csv` | Full timeseries dataset as CSV |
+| `/export/json` | Full timeseries dataset as JSON |
+
+---
+
+## CLI Usage
 
 ```bash
 # Run on simulated data (default tickers: SPY, QQQ, AAPL)
-python stock_regime_detector.py
+python run.py
 
-# Print config and exit without fitting (verify your flags first)
-python stock_regime_detector.py --dry-run --live --tickers MSFT TSLA
+# Print config and exit without fitting
+python run.py --dry-run --live --tickers MSFT TSLA
 
 # Run on live data for specific tickers, verbose output
-python stock_regime_detector.py --live --tickers MSFT TSLA NVDA --verbose
+python run.py --live --tickers MSFT TSLA NVDA --verbose
 
 # Fix 3 regimes, walk-forward refit, export metrics to CSV
-python stock_regime_detector.py --live --n-regimes 3 --walk-forward \
-    --export-metrics results.csv
+python run.py --live --n-regimes 3 --walk-forward --export-metrics results.csv
 
 # Full option reference
-python stock_regime_detector.py --help
+python run.py --help
 ```
 
 ### CLI Options
@@ -195,6 +275,7 @@ python stock_regime_detector.py --help
 ```bash
 pip install -e ".[dev]"
 pytest tests/ -v
+# 30 tests, all passing
 ```
 
 ---
@@ -210,62 +291,33 @@ pytest tests/ -v
 | `matplotlib` | Dashboard visualisation |
 | `joblib` | Parallel ticker processing |
 | `tqdm` | Walk-forward fold progress bar |
+| `flask` | Web UI framework |
+| `flask-login` | Session-based authentication |
 | `yfinance` *(optional)* | Live market data download |
+
+---
+
+## Running with Docker
+
+```bash
+git clone https://github.com/Nobby-sibanda/Stock__Price_Regime_Detector.git
+cd Stock__Price_Regime_Detector
+docker build -t stock-regime-detector .
+
+# Start the container
+docker run -p 5000:5000 stock-regime-detector
+
+# Persist the database and chart outputs between runs
+docker run -p 5000:5000 \
+  -v $(pwd)/outputs:/workspace/outputs \
+  -v $(pwd)/regime_history.db:/workspace/regime_history.db \
+  stock-regime-detector
+```
+
+Open `http://localhost:5000`, register an account, and run your first analysis.
 
 ---
 
 ## Author
 
 **Nobby Sibanda** — [GitHub](https://github.com/Nobby-sibanda)
-
----
-
-## Running with Docker
-
-The project includes a full-featured web UI. Run it in a container and open it in your browser.
-
-### 1 — Clone and build
-
-```bash
-git clone https://github.com/Nobby-sibanda/Stock__Price_Regime_Detector.git
-cd Stock__Price_Regime_Detector
-docker build -t stock-regime-detector .
-```
-
-### 2 — Start the container
-
-```bash
-docker run -p 5000:5000 stock-regime-detector
-```
-
-### 3 — Open in browser
-
-```
-http://localhost:5000
-```
-
-### What you get
-
-The web UI lets you configure every option via a form and shows live results:
-
-| Page | Description |
-|------|-------------|
-| `/` | Configuration form — tickers, data source, model settings, strategy parameters |
-| `/results/{id}` | Auto-refreshing results page — shows a spinner while running, then displays charts, metrics, transition matrix, and current regime recommendation for each ticker × method |
-
-Charts are rendered inline (no file downloads needed) and tabs let you switch between tickers and between HMM / KMeans / Ensemble / Walk-forward methods.
-
-### Optional: persist outputs between runs
-
-```bash
-docker run -p 5000:5000 -v $(pwd)/outputs:/workspace/stock_regime_detector/outputs stock-regime-detector
-```
-
-### Optional: use live market data
-
-```bash
-# Install yfinance inside the container at runtime
-docker run -p 5000:5000 stock-regime-detector sh -c "pip install yfinance -q && python app.py"
-```
-
-Or add `yfinance>=0.2` to `requirements.txt` before building to bake it into the image.

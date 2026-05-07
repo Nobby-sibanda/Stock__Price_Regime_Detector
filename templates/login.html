@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login — Stock Regime Detector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background:#0d1117; color:#e6edf3; font-family:ui-monospace,monospace; }
+    .card { background:#161b22; border:1px solid #30363d; border-radius:8px; }
+    .input { background:#0d1117; border:1px solid #30363d; color:#e6edf3;
+             border-radius:6px; padding:10px 14px; width:100%; font-size:0.9rem; }
+    .input:focus { outline:none; border-color:#58a6ff; }
+    .label { color:#8b949e; font-size:0.8rem; margin-bottom:4px; display:block; }
+    .btn-primary { background:#238636; color:white; border:none; border-radius:6px;
+                   padding:10px 0; cursor:pointer; font-size:0.95rem; width:100%; }
+    .btn-primary:hover { background:#2ea043; }
+    .error-box { background:#3d1a1a; border:1px solid #e74c3c; border-radius:6px;
+                 padding:10px 14px; color:#ff6b6b; font-size:0.85rem; }
+    a { color:#58a6ff; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+  <div style="width:100%;max-width:400px;">
+
+    <!-- Logo -->
+    <div class="text-center mb-8">
+      <div style="font-size:2rem;margin-bottom:8px">↑</div>
+      <h1 class="text-2xl font-bold" style="color:#58a6ff">Stock Regime Detector</h1>
+      <p style="color:#8b949e;font-size:0.85rem;margin-top:4px">Sign in to your account</p>
+    </div>
+
+    <div class="card p-6">
+
+      {% if error %}
+      <div class="error-box mb-5">{{ error }}</div>
+      {% endif %}
+
+      <form method="POST">
+        <div class="mb-4">
+          <label class="label" for="username">Username</label>
+          <input class="input" id="username" name="username" type="text"
+                 value="{{ username|default('') }}" autocomplete="username"
+                 placeholder="your username" required autofocus/>
+        </div>
+
+        <div class="mb-4">
+          <label class="label" for="password">Password</label>
+          <input class="input" id="password" name="password" type="password"
+                 autocomplete="current-password" placeholder="••••••••" required/>
+        </div>
+
+        <div class="flex items-center justify-between mb-6">
+          <label class="flex items-center gap-2 cursor-pointer" style="color:#8b949e;font-size:0.8rem;">
+            <input type="checkbox" name="remember" style="accent-color:#58a6ff"/>
+            Remember me
+          </label>
+        </div>
+
+        <button type="submit" class="btn-primary">Sign in</button>
+      </form>
+
+      <p class="text-center mt-5" style="color:#8b949e;font-size:0.85rem;">
+        No account? <a href="/register">Create one</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>

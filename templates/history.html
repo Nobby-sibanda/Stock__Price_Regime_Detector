@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Analysis History — Stock Regime Detector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background:#0d1117; color:#e6edf3; font-family:ui-monospace,monospace; }
+    .card { background:#161b22; border:1px solid #30363d; border-radius:8px; }
+    .btn { background:#161b22; border:1px solid #30363d; color:#8b949e;
+           border-radius:6px; padding:6px 16px; cursor:pointer; font-size:0.85rem;
+           text-decoration:none; display:inline-block; }
+    .btn:hover { color:#e6edf3; border-color:#58a6ff; }
+    .btn-green { background:#238636; border-color:#238636; color:white; }
+    .btn-green:hover { background:#2ea043; }
+    .status-done    { color:#00d4aa; }
+    .status-error   { color:#e74c3c; }
+    .status-running { color:#f5a623; }
+    .status-pending { color:#8b949e; }
+    table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+    th { color:#8b949e; text-align:left; padding:8px 12px;
+         border-bottom:1px solid #30363d; font-weight:500; }
+    td { padding:8px 12px; border-bottom:1px solid #21262d; vertical-align:middle; }
+    tr:hover td { background:#1c2128; }
+    a { color:#58a6ff; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .tag { display:inline-block; background:#161b22; border:1px solid #30363d;
+           border-radius:10px; padding:1px 8px; font-size:0.72rem; color:#8b949e; }
+    .chip { display:inline-block; padding:2px 8px; border-radius:10px;
+            font-size:0.72rem; font-weight:600; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+<div class="max-w-6xl mx-auto">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+    <div class="flex items-center gap-3">
+      <span style="font-size:1.4rem">↑</span>
+      <h1 class="text-xl font-bold" style="color:#58a6ff">Analysis History</h1>
+    </div>
+    <div class="flex gap-2">
+      <a href="/export/csv" class="btn">Export CSV</a>
+      <a href="/export/json" class="btn">Export JSON</a>
+      <a href="/" class="btn btn-green">+ New Analysis</a>
+      <a href="/logout" class="btn">Logout ({{ current_user.username }})</a>
+    </div>
+  </div>
+
+  {% if runs %}
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Run ID</th>
+          <th>Tickers</th>
+          <th>Methods</th>
+          <th>Status</th>
+          <th>Started</th>
+          <th>Duration</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td>
+            <span style="color:#8b949e;font-size:0.75rem">{{ r.run_id }}</span>
+          </td>
+          <td>
+            {% for t in r.tickers_list %}
+            <span class="tag">{{ t }}</span>
+            {% endfor %}
+          </td>
+          <td style="color:#8b949e">
+            HMM · KMeans · Ensemble
+            {% if r.config_dict.get('walk_forward') %}· WalkFwd{% endif %}
+          </td>
+          <td>
+            {% if r.status == 'done' %}
+              <span class="chip" style="background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa44">done</span>
+            {% elif r.status == 'error' %}
+              <span class="chip" style="background:#e74c3c22;color:#e74c3c;border:1px solid #e74c3c44">error</span>
+            {% elif r.status == 'running' %}
+              <span class="chip" style="background:#f5a62322;color:#f5a623;border:1px solid #f5a62344">running</span>
+            {% else %}
+              <span class="chip" style="background:#30363d;color:#8b949e">pending</span>
+            {% endif %}
+          </td>
+          <td style="color:#8b949e;font-size:0.78rem">{{ r.created_at[:16] }}</td>
+          <td style="color:#8b949e;font-size:0.78rem">{{ r.duration }}</td>
+          <td>
+            {% if r.status == 'done' %}
+              <a href="/results/{{ r.run_id }}">View</a>
+            {% elif r.status == 'error' %}
+              <span style="color:#8b949e;font-size:0.75rem" title="{{ r.error }}">failed</span>
+            {% else %}
+              <a href="/results/{{ r.run_id }}">Monitor</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ML data note -->
+  <div class="card p-4 mt-4" style="border-color:#30363d">
+    <p style="color:#8b949e;font-size:0.8rem">
+      <strong style="color:#f0f6fc">ML Dataset</strong> — all completed analyses store full daily time series
+      (OHLCV + 9 features + regime labels + signals) in the database.
+      Use <a href="/export/csv">Export CSV</a> or <a href="/export/json">Export JSON</a>
+      to download the combined dataset for further machine learning work.
+    </p>
+  </div>
+
+  {% else %}
+  <div class="card p-10 text-center">
+    <p style="color:#8b949e">No analyses yet. <a href="/">Run your first analysis</a>.</p>
+  </div>
+  {% endif %}
+
+</div>
+</body>
+</html>

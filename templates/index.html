@@ -24,9 +24,23 @@
   <!-- Header -->
   <div class="max-w-3xl mx-auto">
     <div class="mb-8">
-      <div class="flex items-center gap-3 mb-2">
-        <span style="font-size:1.6rem">↑</span>
-        <h1 class="text-2xl font-bold" style="color:#58a6ff">Stock Regime Detector</h1>
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-3">
+        <div class="flex items-center gap-3">
+          <span style="font-size:1.6rem">↑</span>
+          <h1 class="text-2xl font-bold" style="color:#58a6ff">Stock Regime Detector</h1>
+        </div>
+        <div class="flex gap-2">
+          <a href="/history"
+             style="background:#161b22;border:1px solid #30363d;color:#8b949e;
+                    border-radius:6px;padding:6px 14px;font-size:0.82rem;text-decoration:none;">
+            History
+          </a>
+          <a href="/logout"
+             style="background:#161b22;border:1px solid #30363d;color:#8b949e;
+                    border-radius:6px;padding:6px 14px;font-size:0.82rem;text-decoration:none;">
+            Logout ({{ current_user.username }})
+          </a>
+        </div>
       </div>
       <p style="color:#8b949e">
         Unsupervised market regime detection using Hidden Markov Models &amp; KMeans.

@@ -8,11 +8,9 @@ import os
 import sys
 
 # ── Import path setup ─────────────────────────────────────────────────────────
-# The file stock_regime_detector.py (CLI launcher) lives alongside this file.
-# If the script directory is in sys.path, Python finds that file first and
-# treats it as the 'stock_regime_detector' module, causing infinite recursion.
-# Fix: strip the script directory and add only its parent, so Python resolves
-# 'stock_regime_detector' to the package directory instead.
+# stock_regime_detector.py (the CLI launcher) shadows the package when the
+# project directory is on sys.path.  Strip it; add only the parent so Python
+# resolves 'stock_regime_detector' to the package directory.
 
 _here   = os.path.dirname(os.path.abspath(__file__))
 _parent = os.path.dirname(_here)
@@ -23,16 +21,20 @@ while _here in sys.path:
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
+import io
+import csv
 import json
 import uuid
 import threading
 import traceback
 import logging
+from datetime import datetime, timezone
 
 from flask import (
     Flask, render_template, request,
-    redirect, url_for, jsonify, send_from_directory,
+    redirect, url_for, jsonify, send_from_directory, Response,
 )
+from flask_login import login_required, current_user
 
 from stock_regime_detector.data     import simulate_market_data, load_live_data
 from stock_regime_detector.features import engineer_features, FEAT_COLS
@@ -45,13 +47,25 @@ from stock_regime_detector.metrics  import performance_metrics
 from stock_regime_detector.plot     import plot_dashboard
 from stock_regime_detector.config   import REGIME_NAMES, REGIME_ICONS, STRATEGY_DESC
 
-# ── Flask app — template_folder set explicitly so Flask finds it from any cwd ─
+import stock_regime_detector.db   as _db
+from stock_regime_detector.auth  import auth_bp, init_login_manager
+
+# ── Flask app ─────────────────────────────────────────────────────────────────
+
 app = Flask(
     __name__,
     template_folder=os.path.join(_here, "templates"),
 )
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 
-RUNS     = {}
+# Auth
+app.register_blueprint(auth_bp)
+init_login_manager(app)
+
+# Init DB
+_db.init_db()
+
+RUNS     = {}          # in-memory status cache (run_id -> dict)
 OUT_ROOT = os.path.join(_here, "outputs")
 os.makedirs(OUT_ROOT, exist_ok=True)
 
@@ -63,6 +77,7 @@ log = logging.getLogger(__name__)
 
 def _run_analysis(run_id, cfg):
     RUNS[run_id]["status"] = "running"
+    _db.update_run_status(run_id, "running")
     try:
         outdir = os.path.join(OUT_ROOT, run_id)
         os.makedirs(outdir, exist_ok=True)
@@ -113,7 +128,7 @@ def _run_analysis(run_id, cfg):
                 cur_prob = float(df_sig["regime_prob"].iloc[-1]) \
                            if "regime_prob" in df_sig else 0.0
 
-                ticker_res[method] = {
+                result_data = {
                     "metrics":       metrics,
                     "transition":    trans.round(3).to_dict("split"),
                     "regime_id":     cur,
@@ -123,27 +138,37 @@ def _run_analysis(run_id, cfg):
                     "strategy_desc": STRATEGY_DESC[cur],
                     "chart_url":     f"/outputs/{run_id}/{ticker}_{method}_dashboard.png",
                 }
+                ticker_res[method] = result_data
+
+                # ── Persist to database ──────────────────────────────────────
+                _db.insert_result(run_id, ticker, method, result_data)
+                _db.insert_timeseries(run_id, ticker, method, df_sig)
+
                 log.info("  %s/%s done", ticker, method)
 
             all_results[ticker] = ticker_res
 
         RUNS[run_id].update(status="done", results=all_results)
+        _db.update_run_status(run_id, "done")
 
     except Exception as exc:
-        RUNS[run_id].update(status="error",
-                            error=str(exc),
-                            traceback=traceback.format_exc())
+        err_msg = str(exc)
+        tb      = traceback.format_exc()
+        RUNS[run_id].update(status="error", error=err_msg, traceback=tb)
+        _db.update_run_status(run_id, "error", error=err_msg)
         log.exception("Run %s failed", run_id)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
 
 @app.route("/run", methods=["POST"])
+@login_required
 def run():
     f   = request.form
     cfg = dict(
@@ -161,18 +186,53 @@ def run():
     )
     run_id = str(uuid.uuid4())[:8]
     RUNS[run_id] = {"status": "pending", "cfg": cfg}
+
+    # Persist the run record immediately so history shows it
+    _db.insert_run(run_id, current_user.id, cfg)
+
     threading.Thread(target=_run_analysis, args=(run_id, cfg), daemon=True).start()
     return redirect(url_for("results", run_id=run_id))
 
 
 @app.route("/results/<run_id>")
+@login_required
 def results(run_id):
+    # Accept runs from in-memory (current session) or DB (past sessions)
     if run_id not in RUNS:
-        return "Run not found", 404
+        row = _db.get_run(run_id)
+        if not row:
+            return "Run not found", 404
+        # Reconstruct a minimal status dict from DB for polling
+        RUNS[run_id] = {"status": row["status"], "cfg": json.loads(row["config"])}
+        if row["status"] == "done":
+            # Rebuild results payload from DB so the status API works
+            RUNS[run_id]["results"] = _rebuild_results_from_db(run_id)
+        elif row["status"] == "error":
+            RUNS[run_id]["error"]     = row["error"] or "unknown error"
+            RUNS[run_id]["traceback"] = ""
     return render_template("results.html", run_id=run_id)
 
 
+def _rebuild_results_from_db(run_id: str) -> dict:
+    rows = _db.get_results_for_run(run_id)
+    out  = {}
+    for row in rows:
+        t, m = row["ticker"], row["method"]
+        out.setdefault(t, {})[m] = {
+            "metrics":       json.loads(row["metrics"]),
+            "transition":    json.loads(row["transition_json"]),
+            "regime_id":     row["regime_id"],
+            "regime_name":   row["regime_name"],
+            "regime_icon":   REGIME_ICONS.get(row["regime_id"], ""),
+            "regime_prob":   row["regime_prob"],
+            "strategy_desc": row["strategy_desc"],
+            "chart_url":     row["chart_url"],
+        }
+    return out
+
+
 @app.route("/api/status/<run_id>")
+@login_required
 def api_status(run_id):
     run = RUNS.get(run_id)
     if not run:
@@ -187,8 +247,69 @@ def api_status(run_id):
 
 
 @app.route("/outputs/<run_id>/<filename>")
+@login_required
 def serve_chart(run_id, filename):
     return send_from_directory(os.path.join(OUT_ROOT, run_id), filename)
+
+
+# ── History & export routes ───────────────────────────────────────────────────
+
+@app.route("/history")
+@login_required
+def history():
+    raw_runs = _db.list_runs(user_id=current_user.id)
+    runs     = _enrich_runs(raw_runs)
+    return render_template("history.html", runs=runs)
+
+
+@app.route("/export/csv")
+@login_required
+def export_csv():
+    rows = _db.export_all_timeseries(user_id=current_user.id)
+    if not rows:
+        return "No data to export.", 204
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=regime_timeseries.csv"},
+    )
+
+
+@app.route("/export/json")
+@login_required
+def export_json():
+    rows = _db.export_all_timeseries(user_id=current_user.id)
+    return Response(
+        json.dumps(rows, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=regime_timeseries.json"},
+    )
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _enrich_runs(raw_runs: list[dict]) -> list[dict]:
+    for r in raw_runs:
+        r["tickers_list"] = json.loads(r["tickers"])
+        r["config_dict"]  = json.loads(r["config"])
+        if r["created_at"] and r["completed_at"]:
+            try:
+                fmt = "%Y-%m-%d %H:%M:%S"
+                start = datetime.strptime(r["created_at"],   fmt)
+                end   = datetime.strptime(r["completed_at"], fmt)
+                secs  = int((end - start).total_seconds())
+                r["duration"] = f"{secs}s"
+            except Exception:
+                r["duration"] = "—"
+        else:
+            r["duration"] = "—"
+    return raw_runs
 
 
 if __name__ == "__main__":
